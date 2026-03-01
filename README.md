@@ -2,9 +2,11 @@
 
 This generative art display shows a scrolling text message with an ASCII icon in the background, moving around the screen at random. The icon bounces off of the edges of the display, and when it reaches a corner, the scrolling text changes to the next in a set of random messages. The messages include quotes from early computer user guides, emphasizing the strangeness of a world without intrinsic computer knowledge as well as just how similar computer interaction was in its early days as it is today.
 
-<div align="center">
-  <video src="https://github.com/lucyking140/ces-generative-art/raw/refs/heads/main/full_animation.mp4" title="the_asset_url" controls width="50%"></video>
-</div>
+[![Full animation video](https://img.youtube.com/vi/LdZ8YPkkrzI/0.jpg)](https://www.youtube.com/watch?v=LdZ8YPkkrzI)
+
+This visual was initially a part of a group of ESP32 displays that were shown together in a hanging formation. Click the image below to see a video of the hanging and spinning displays.
+
+[![all class video](https://img.youtube.com/vi/9MEQ5M5bH7o/0.jpg)](https://www.youtube.com/watch?v=9MEQ5M5bH7o)
 
 The generative display is programmed in C++ on an ESP32 microcontroller. This program is run using PlatformIO, which allows C++ code to be uploaded via USB serial connection onto an ESP32.
 
