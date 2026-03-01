@@ -9,6 +9,9 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite screenSprite = TFT_eSprite(&tft);
 TFT_eSprite iconSprite   = TFT_eSprite(&tft);
 
+#define MAX_LINES      48
+#define MAX_LINE_CHARS 32
+
 const char* mouseIcon[] = {
   "    ,d88b.         ",
   " ,8P'    `8,       ",
@@ -92,7 +95,6 @@ const char** icons[]     = { mouseIcon, keyboardIcon, folderIcon, solitaireIcon,
 const int    NUM_ICONS   = 5;
 const char** currentIcon = windowsIcon;
 
-// ---- MESSAGES ----
 const char* mouseMsg =
   "The mouse can be used as a pointing device "
   "by sliding it over the work surface. "
@@ -115,39 +117,33 @@ const char* messages[]   = { mouseMsg, backspaceMsg, folderMsg, solitaireMsg, wi
 const int   NUM_MESSAGES = 5;
 const char* currentMsg   = windowsMsg;
 
-// ---- SCROLL STATE ----
+// for scrolling text
 float scrollY     = 0;
 float scrollSpeed = 1.5f;
 const int SCROLL_GAP = 60;
-
-// ---- WRAPPED LINES ----
-#define MAX_LINES      48
-#define MAX_LINE_CHARS 32
 char wrappedLines[MAX_LINES][MAX_LINE_CHARS];
 int  numWrappedLines = 0;
 int  lineH           = 0;
 int  totalTextH      = 0;
 
-// ---- ICON STATE ----
+// for icon movement
 int   iconW = 0, iconH = 0;
 float ix, iy, ivx, ivy;
 const float ICON_SPEED = 0.8f;
 bool  hasChangedMsg = false;
 
-// ---- INTRO ----
+// for intro
 static unsigned long lastIntro = 0;
 const char* oss[] = { "Apple Macintosh", "Windows 95", "Xerox Alto", "Amiga 500", nullptr };
 
-// ------------------------------------------------------------------
-// FONT HELPERS
-// ------------------------------------------------------------------
+// setup for scrolling font
 void setScrollFont() {
-  tft.setFreeFont(&helvetica_light16pt7b);   // must clear free-font or setTextSize is ignored
-//   tft.setTextSize(3);
+  tft.setFreeFont(&helvetica_light16pt7b);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
 }
 
+// changes the font for only one sprite
 void setScrollFontOnSprite(TFT_eSprite& spr) {
   spr.setFreeFont(&helvetica_light16pt7b);
 //   spr.setTextSize(3);
@@ -155,9 +151,8 @@ void setScrollFontOnSprite(TFT_eSprite& spr) {
   spr.setTextColor(TFT_WHITE, TFT_BLACK);
 }
 
-// ------------------------------------------------------------------
-// WORD WRAP  (call setScrollFont() on tft first)
-// ------------------------------------------------------------------
+// divides messages into the right length to fit on the screen
+// only works when font is helvetica_light16pt7b (use setScrollFont())
 int wordWrap(const char* text, int maxW,
              char lines[][MAX_LINE_CHARS], int maxLines) {
   int lineCount = 0;
@@ -197,9 +192,7 @@ int wordWrap(const char* text, int maxW,
   return lineCount;
 }
 
-// ------------------------------------------------------------------
-// BUILD WRAPPED TEXT
-// ------------------------------------------------------------------
+// sets up all of the values for the scrolling text
 void buildWrappedText(const char* text) {
   setScrollFont();
   numWrappedLines = wordWrap(text, tft.width(), wrappedLines, MAX_LINES);
@@ -208,16 +201,14 @@ void buildWrappedText(const char* text) {
   scrollY    = tft.height();
 }
 
-// ------------------------------------------------------------------
-// ICON SPRITE
-// ------------------------------------------------------------------
-
-void createIconSprite(const char** lines, uint16_t color = TFT_BLUE) {
+// deletes and recreates the icon sprite so it moves
+void createIconSprite(const char** lines, uint16_t color = TFT_BLUE, uint16_t bgColor = TFT_BLACK) {
   iconSprite.deleteSprite();
   iconSprite.setFreeFont(&Helvetica6pt7b);
 
   iconW = 0;
   int n = 0;
+  // getting the longest length of the lines for the icon width
   for (int i = 0; lines[i] != nullptr; i++) {
     int w = iconSprite.textWidth(lines[i]);
     if (w > iconW) iconW = w;
@@ -227,24 +218,26 @@ void createIconSprite(const char** lines, uint16_t color = TFT_BLUE) {
 
   iconSprite.setColorDepth(16);
   iconSprite.createSprite(iconW, iconH);
-  iconSprite.fillSprite(TFT_BLACK);
+  // set the whole thing to be black
+  iconSprite.fillSprite(bgColor);
   iconSprite.setFreeFont(&Helvetica6pt7b);
-  iconSprite.setTextColor(color, TFT_BLACK);
+  // given color text on a black background
+  iconSprite.setTextColor(color, bgColor);
 
+  // draw each line of the icon
   int lh = iconSprite.fontHeight();
   for (int i = 0; lines[i] != nullptr; i++) {
     iconSprite.drawString(lines[i], 0, i * lh);
   }
 
-  // randomize position now that iconW/iconH are known
+  // randomize position now that iconW/iconH are known, but keep it within the bounds of the screen
   ix = random(20, max((int)tft.width()  - iconW - 20, 21));
   iy = random(20, max((int)tft.height() - iconH - 20, 21));
 }
 
-// ------------------------------------------------------------------
-// VELOCITY PERTURBATION
-// ------------------------------------------------------------------
-void perturbVelocity(float& vx, float& vy, float amount) {
+// changes the velocity of the icon a little bit but doesn't let it get stuck
+// angle of bounce changes, speed is constant
+void changeVelocity(float& vx, float& vy, float amount) {
   vx += random(-100, 100) / 100.0f * amount;
   vy += random(-100, 100) / 100.0f * amount;
   float mag = sqrtf(vx * vx + vy * vy);
@@ -261,30 +254,24 @@ void perturbVelocity(float& vx, float& vy, float amount) {
   vy = (vy / mag) * ICON_SPEED;
 }
 
-// ------------------------------------------------------------------
-// SWITCH MESSAGE
-// ------------------------------------------------------------------
+// switches the message and icon to another random one after a corner hit
 void switchMessage(bool showCornerHit = true) {
   int idx;
   do { idx = random(NUM_MESSAGES); } while (messages[idx] == currentMsg);
 
-  // save these so we have them before they change in createIconSprite()
+  // save cur icon location so we have them before they change in createIconSprite()
   float curX = ix;
   float curY = iy;
 
+  // we either just had a corner hit OR just showed the intro
+  // if its a corner hit, show the hit message
   if (showCornerHit){
+    // blue background
     tft.fillScreen(TFT_BLUE);
 
-    createIconSprite(currentIcon, TFT_BLACK);  // white text, but bg is still TFT_BLACK
-    // fill icon background blue to match screen
-    iconSprite.fillRect(0, 0, iconW, iconH, TFT_BLUE);
-    iconSprite.setFreeFont(&Helvetica6pt7b);
-    iconSprite.setTextColor(TFT_BLACK, TFT_BLUE);
-    int lh = iconSprite.fontHeight();
-    for (int i = 0; currentIcon[i] != nullptr; i++) {
-        iconSprite.drawString(currentIcon[i], 0, i * lh);
-    }
-    // push the blue sprite at the same location as the corner hit
+    // black text on blue background
+    createIconSprite(currentIcon, TFT_BLACK, TFT_BLUE);
+    // push the new black sprite at the same location as the corner hit
     iconSprite.pushSprite((int)curX, (int)curY);
   
     tft.setTextDatum(MC_DATUM);
@@ -292,17 +279,19 @@ void switchMessage(bool showCornerHit = true) {
     tft.drawString("corner", tft.width()  / 2, tft.height()  / 2 - tft.fontHeight());
     tft.drawString("hit!", tft.width()  / 2, tft.height()  / 2);
     tft.drawString("next tip..", tft.width()  / 2, tft.height()  / 2 + tft.fontHeight());
-    //   tft.drawString("tip...", tft.width()  / 2, tft.height()  / 2 + 2 * tft.fontHeight());
+    
     delay(1000);
+    // clear screen
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_WHITE, TFT_TRANSPARENT);
   }
 
   currentMsg  = messages[idx];
-  // Note that this assumes same num icons as messages (and that their indecies match up)
+  // this assumes same num icons as messages (and that their indecies match up)
   currentIcon = icons[idx];
 
+  // rebuild text for new message and icon
   buildWrappedText(currentMsg);
   createIconSprite(currentIcon);
   setScrollFont();
@@ -311,9 +300,7 @@ void switchMessage(bool showCornerHit = true) {
   if (iy + iconH > tft.height()) iy = tft.height() - iconH;
 }
 
-// ------------------------------------------------------------------
-// INTRO
-// ------------------------------------------------------------------
+// intro sequence
 void showIntro(bool isSetup = false) {
   tft.setFreeFont(&helvetica_light12pt7b);
   tft.setTextDatum(MC_DATUM);
@@ -328,18 +315,18 @@ void showIntro(bool isSetup = false) {
   int iconX = tft.width()  / 2 - iconW / 2;
   int iconY = tft.height() / 2 - iconH / 2;
 
-  // compositing sprite — same size as screen
+  // overlay sprite for the text 
   TFT_eSprite introSprite = TFT_eSprite(&tft);
   introSprite.setColorDepth(16);
   introSprite.createSprite(tft.width(), tft.height());
 
-  // helper: redraw the base (black bg + apple icon) into introSprite
+  // helper to redraw the black bg + computer icon
   auto drawBase = [&]() {
     introSprite.fillSprite(TFT_BLACK);
     iconSprite.pushToSprite(&introSprite, iconX, iconY, TFT_BLACK);
   };
 
-  // draw a string into introSprite and push to screen
+  // draws a string onto the screen overlay sprite
   auto showStr = [&](const char* s, int x, int y) {
     introSprite.setFreeFont(&helvetica_light12pt7b);
     introSprite.setTextDatum(MC_DATUM);
@@ -348,14 +335,13 @@ void showIntro(bool isSetup = false) {
     introSprite.pushSprite(0, 0);
   };
 
-  // type a string character by character, redrawing base each time
+  // type a string character by character, redrawing base each time so the icon stays
   auto typeText = [&](const char* s, int x, int y, int delayMs = 60) {
     char buf[64] = {0};
     for (int i = 0; s[i] != '\0'; i++) {
       buf[i] = s[i];
       buf[i+1] = '\0';
       drawBase();
-      // redraw any persistent text (Welcome to) if needed
       introSprite.setFreeFont(&helvetica_light12pt7b);
       introSprite.setTextDatum(MC_DATUM);
       introSprite.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -364,10 +350,8 @@ void showIntro(bool isSetup = false) {
     }
   };
 
-  // erase a string by just redrawing the base + other persistent elements
-  // caller is responsible for re-pushing whatever else should stay visible
+  // erase a string by just redrawing the base
   auto eraseStr = [&](int x, int y) {
-    // just redraw base — the string is gone since we don't include it
     drawBase();
     introSprite.pushSprite(0, 0);
   };
@@ -388,7 +372,7 @@ void showIntro(bool isSetup = false) {
   }
 
   for (int i = 0; oss[i] != nullptr; i++) {
-    // split into words
+    // split the computer name into words
     char buf[64];
     strncpy(buf, oss[i], sizeof(buf));
     int wordCount = 0;
@@ -422,7 +406,7 @@ void showIntro(bool isSetup = false) {
 
     delay(800);
 
-    // erase OS name by redrawing base + welcome only
+    // erase computer name by redrawing base and welcome only
     drawBase();
     introSprite.setFreeFont(&helvetica_light12pt7b);
     introSprite.setTextDatum(MC_DATUM);
@@ -439,7 +423,7 @@ void showIntro(bool isSetup = false) {
 
   introSprite.deleteSprite();
   if (!isSetup){
-    // just to change things up, but don't want to show "corner hit"
+    // just to change things up, but don't want to show "corner hit" right after the intro
     switchMessage(false);
   } else {
     createIconSprite(currentIcon);
@@ -449,15 +433,16 @@ void showIntro(bool isSetup = false) {
   delay(500);
   setScrollFont();
 }
-// ------------------------------------------------------------------
-// DRAW FRAME — composites everything into screenSprite, pushes once
-// ------------------------------------------------------------------
+
+// gathers everything into a screenSprite and draws it
 void drawFrame() {
   screenSprite.fillSprite(TFT_BLACK);
   setScrollFontOnSprite(screenSprite);
 
+  // total height of a cycle of the scrolling message
   int period = totalTextH + SCROLL_GAP;
 
+  // draw the lines where we are in the period
   for (int copy = 0; copy < 2; copy++) {
     int topY = (int)scrollY + copy * period;
 
@@ -473,27 +458,31 @@ void drawFrame() {
     }
   }
 
-  // blit icon using black as transparency key
+  // push icon with transparent as black -- it's technically on top of the text, but you can't really notice
   iconSprite.pushToSprite(&screenSprite, (int)ix, (int)iy, TFT_BLACK);
 
+  // push the whole screen
   screenSprite.pushSprite(0, 0);
 }
 
-// ------------------------------------------------------------------
-// SETUP
-// ------------------------------------------------------------------
+// runs when the program first starts
 void setup() {
+  // for debugging
   Serial.begin(115200);
   tft.init();
+  // so buttons are on top of the lilygo
   tft.setRotation(2);
   tft.fillScreen(TFT_BLACK);
   randomSeed(esp_random());
 
+  // intro sequence
   showIntro();
 
+  // initialize screen sprite
   screenSprite.setColorDepth(16);
   screenSprite.createSprite(tft.width(), tft.height());
 
+  // set up message and create icon
   buildWrappedText(currentMsg);
   createIconSprite(currentIcon);
   setScrollFont();
@@ -503,12 +492,11 @@ void setup() {
   ivx = -ICON_SPEED;
   ivy =  ICON_SPEED * 0.7f;
 
+  // used to track if its been a minute since the intro last showed
   lastIntro = millis();
 }
 
-// ------------------------------------------------------------------
-// LOOP
-// ------------------------------------------------------------------
+// runs forever after setup
 void loop() {
 
   if (millis() - lastIntro > 60000) {
@@ -526,20 +514,21 @@ void loop() {
   ix += ivx;
   iy += ivy;
 
+  // we've hit the wall and need to bounce
   if (ix <= 0) {
     ix = 0; ivx = fabsf(ivx);
-    perturbVelocity(ivx, ivy, 0.5f);
+    changeVelocity(ivx, ivy, 0.5f);
   } else if (ix + iconW >= tft.width()) {
     ix = tft.width() - iconW; ivx = -fabsf(ivx);
-    perturbVelocity(ivx, ivy, 0.5f);
+    changeVelocity(ivx, ivy, 0.5f);
   }
 
   if (iy <= 0) {
     iy = 0; ivy = fabsf(ivy);
-    perturbVelocity(ivx, ivy, 0.5f);
+    changeVelocity(ivx, ivy, 0.5f);
   } else if (iy + iconH >= tft.height()) {
     iy = tft.height() - iconH; ivy = -fabsf(ivy);
-    perturbVelocity(ivx, ivy, 0.5f);
+    changeVelocity(ivx, ivy, 0.5f);
   }
 
   bool inLeft   = ix              < tft.width()  / 30;
@@ -548,12 +537,14 @@ void loop() {
   bool inBottom = (iy + iconH)    > tft.height() - tft.height() / 30;
   bool corner   = (inLeft || inRight) && (inTop || inBottom);
 
+  // hasChangedMsg is a debouncer so that as long as we're inside the corner range, we only change the message once
   if (corner && !hasChangedMsg) {
     hasChangedMsg = true;
     switchMessage();
   }
   if (!corner) hasChangedMsg = false;
 
+  // draw everything in the new locations
   drawFrame();
 
   delay(20);
